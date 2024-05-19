@@ -89,7 +89,7 @@ def get_phone_numbersCommand(update: Update, context):
 def get_repl_logsCommand(update: Update, context):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(hostname=host, username=username, password=password, port=port)
+    client.connect(hostname=host_db, username=username_db, password=password, port=port)
     stdin, stdout, stderr = client.exec_command('cat /var/log/postgresql/postgresql-15-main.log | grep repl')
     data = stdout.read() + stderr.read()
     client.close()
