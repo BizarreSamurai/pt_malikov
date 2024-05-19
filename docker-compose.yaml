@@ -1,0 +1,91 @@
+version: '3'
+
+services:
+  telegram_bot:
+    image: bot_image:latest
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    environment:
+      - HOST=${RM_HOST}
+      - PORT=${RM_PORT}
+      - USER=${RM_USER}
+      - PASSWORD=${RM_PASSWORD}
+      - HOST_DB=${DB_HOST}
+      - USER_DB=${DB_USER}
+      - PASSWORD_DB=${DB_PASSWORD}
+      - PORT_DB=${DB_PORT}
+      - DATABASE=${DB_DATABASE}
+      - TOKEN=${TOKEN}
+    depends_on:
+      - db
+    networks:
+      bot_network:
+        ipv4_address: 172.28.0.2
+    ports:
+      - "8080:8080"
+
+  db:
+    image: db_image:latest
+    build:
+      context: ./db
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256\nhost all all 172.28.0.2/16 password\nhost replication ${DB_REPL_USER} 172.28.0.4/16 md5"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    command: |
+      postgres
+      -c archive_mode=on
+      -c archive_command='cp %p /oracle/pg_data/archive/%f'
+      -c listen_addresses='*'
+      -c wal_level=replica
+      -c hot_standby=on
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby_feedback=on
+      -c log_replication_commands=on
+    networks:
+      bot_network:
+        ipv4_address: 172.28.0.3
+    ports:
+      - "5432:5432"
+
+  db_repl:
+    image: db_repl_image:latest
+    build:
+      context: ./db_repl
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGUSER: ${DB_REPL_USER}
+      PGPASSWORD: ${DB_REPL_PASSWORD}
+    command: |
+      bash -c "
+      until pg_basebackup --pgdata=/var/lib/postgresql/data -R --slot=replication_slot --host=${DB_HOST} --port=${DB_PORT}
+      do
+      echo 'Waiting for db to connect...'
+      sleep 1s
+      done
+      echo 'Backup done, starting replica...'
+      chmod 0700 /var/lib/postgresql/data
+      postgres
+      "
+    depends_on:
+      - db
+    networks:
+      bot_network:
+        ipv4_address: 172.28.0.4
+    ports:
+      - "5433:5432"
+
+networks:
+  bot_network:
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+
