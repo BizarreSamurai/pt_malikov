@@ -90,7 +90,7 @@ def get_repl_logsCommand(update: Update, context):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(hostname=host, username=username, password=password, port=port)
-    stdin, stdout, stderr = client.exec_command('docker logs devops_bot-db-1 | grep repl')
+    stdin, stdout, stderr = client.exec_command('docker logs devops_bot-db-1 | grep replication')
     data = stdout.read() + stderr.read()
     client.close()
     data = str(data, 'utf-8').replace('\\n', '\n').replace('\\t', '\t')[2:-1]
