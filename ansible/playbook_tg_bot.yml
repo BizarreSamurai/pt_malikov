@@ -1,0 +1,213 @@
+---
+- name: Setup and Copy bot.py from GitHub
+  hosts: tg_bot
+  become: yes
+
+  tasks:
+    - name: Ensure git and python3 are installed
+      apt:
+        name:
+          - git
+          - python3
+          - python3-venv
+        state: present
+        update_cache: yes
+
+    - name: Create a virtual environment
+      command: python3 -m venv /opt/tg_bot_venv
+
+    - name: Install required Python libraries in the virtual environment
+      command: /opt/tg_bot_venv/bin/pip install python-telegram-bot==13.7 psycopg2-binary paramiko==2.7.2 python-dotenv
+
+    - name: Clone the repository
+      git:
+        repo: 'https://github.com/BizarreSamurai/pt_malikov.git'
+        dest: /tmp/pt_malikov
+        version: just_bot
+
+    - name: Create destination directory
+      file:
+        path: /opt/tg_bot
+        state: directory
+        mode: '0755'
+
+    - name: Copy bot.py to the destination
+      copy:
+        src: /tmp/pt_malikov/just_bot/bot.py
+        dest: /opt/tg_bot/bot.py
+        remote_src: yes
+
+    - name: Clean up the cloned repository
+      file:
+        path: /tmp/pt_malikov
+        state: absent
+
+    - name: Copy .env file to remote host
+      copy:
+        src: .env
+        dest: /opt/tg_bot/.env
+
+    - name: Run bot.py
+      shell: |
+        source /opt/tg_bot/.env
+        nohup /opt/tg_bot_venv/bin/python /opt/tg_bot/bot.py > /opt/tg_bot/bot.log 2>&1 &
+      args:
+        chdir: /opt/tg_bot/
+
+
+- name: Deploy PostgreSQL master server
+  hosts: db_master
+  become: yes
+  tasks:
+    - name: Install packages
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - sshpass
+        - postgresql
+        - postgresql-contrib
+        - build-essential
+        - python3-psycopg2
+
+    - name: Install PostgreSQL
+      package:
+        name: postgresql
+        state: present
+
+    - name: Ensure PostgreSQL service is running
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Set password for PostgreSQL user 'postgres'
+      become_user: postgres
+      shell: "psql -c \"ALTER USER postgres WITH PASSWORD 'Qq12345';\""
+
+    - name: Check if database exists
+      command: "psql -U postgres -lqt | cut -d \\| -f 1 | grep -qw \"db_telegram\""
+      ignore_errors: true
+      register: db_check_result
+      failed_when: false
+
+    - name: Create PostgreSQL database if not exists
+      become_user: postgres
+      command: "createdb -U postgres db_telegram"
+      when: db_check_result.rc != 0
+      failed_when: false
+
+    - name: Create replication user
+      become_user: postgres
+      command: "psql -c \"DROP USER IF EXISTS replicator; CREATE USER replicator REPLICATION LOGIN ENCRYPTED PASSWORD 'replicator_password';\""
+      ignore_errors: yes
+
+    - name: Initialize database schema
+      become_user: postgres
+      postgresql_query:
+        db: db_telegram
+        query: |
+          CREATE TABLE IF NOT EXISTS e_table(
+            id SERIAL PRIMARY KEY,
+            email VARCHAR(100) NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS pn_table(
+            id SERIAL PRIMARY KEY,
+            phone_number VARCHAR(100) NOT NULL
+          );
+
+    - name: Ensure directory /oracle/pg_data/archive/ exists
+      file:
+        path: /oracle/pg_data/archive/
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: '0755'
+
+    - name: Modify PostgreSQL configuration file
+      blockinfile:
+        path: /etc/postgresql/15/main/postgresql.conf
+        block: |
+          listen_addresses = '*'
+          port = 5432
+          archive_mode = on
+          archive_command = 'cp %p /oracle/pg_data/archive/%f'
+          max_wal_senders = 10
+          wal_level = replica
+          wal_log_hints = on
+          log_replication_commands = on
+
+    - name: Configure pg_hba.conf
+      lineinfile:
+        path: "/etc/postgresql/15/main/pg_hba.conf"
+        insertafter: EOF
+        line: "{{ item }}"
+      loop:
+        - "host all all {{ hostvars['tg_bot']['ansible_host'] }}/24 scram-sha-256"
+        - "host replication replicator {{ hostvars['db_slave']['ansible_host'] }}/24 md5"
+
+    - name: Reload PostgreSQL service to apply changes
+      service:
+        name: postgresql
+        state: reloaded
+
+    - name: Change permissions for postgresql-15-main.log
+      file:
+        path: /var/log/postgresql/postgresql-15-main.log
+        mode: '0644'
+
+    - name: Restart PostgreSQL service to apply changes
+      service:
+        name: postgresql
+        state: restarted
+
+- name: Configure db_slave
+  become: yes
+  hosts: db_slave
+
+  tasks:
+    - name: Install packages
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - postgresql
+        - postgresql-contrib
+        - python3-pexpect
+
+    - name: Modify PostgreSQL configuration file
+      blockinfile:
+        path: /etc/postgresql/15/main/postgresql.conf
+        block: |
+          listen_addresses = 'localhost, {{ hostvars['db_master']['ansible_host'] }}'
+      become_user: postgres
+
+    - name: Stop PostgreSQL service
+      systemd:
+        name: postgresql
+        state: stopped
+
+    - name: Remove files from main directory
+      file:
+        path: /var/lib/postgresql/15/main
+        state: absent
+      become: yes
+      become_user: postgres
+
+    - name: Replication
+      command: "pg_basebackup -R -h {{ hostvars['db_master']['ansible_host'] }} -U replicator -D /var/lib/postgresql/15/main -P"
+      become: yes
+      become_user: postgres
+      register: result
+      until: result is not failed
+      retries: 3
+      delay: 5
+      environment:
+        PGUSER: replicator
+        PGPASSWORD: replicator_password
+
+    - name: Start PostgreSQL service
+      systemd:
+        name: postgresql
+        state: started
+
