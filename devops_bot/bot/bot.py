@@ -329,7 +329,7 @@ def findEmailCommand(update: Update, context):
 def  findEmail(update: Update, context):
     user_input = update.message.text # Получаем текст, содержащий(или нет) электронные адресса
 
-    emailRegex = re.compile(r'[A-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[A-Z]{2,4}',re.I) # регулярка для поиска email
+    emailRegex = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b') # регулярка для поиска email
 
     emailList = emailRegex.findall(user_input) # Ищем email
 
