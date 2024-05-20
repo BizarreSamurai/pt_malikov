@@ -15,17 +15,17 @@ from psycopg2 import Error
 dotenv_path = Path.cwd() / Path('.env')
 load_dotenv(dotenv_path=dotenv_path)
 
-host = os.getenv('HOST')
-port = os.getenv('PORT')
-username = os.getenv('USER')
-password = os.getenv('PASSWORD')
+host = os.getenv('RM_HOST')
+port = os.getenv('RM_PORT')
+username = os.getenv('RM_USER')
+password = os.getenv('RM_PASSWORD')
 
-host_db = os.getenv('HOST_DB')
-username_db = os.getenv('USER_DB')
+host_db = os.getenv('DB_HOST')
+username_db = os.getenv('DB_USER')
 
-port_db = os.getenv('PORT_DB')
-password_db = os.getenv('PASSWORD_DB')
-database = os.getenv('DATABASE')
+port_db = os.getenv('DB_PORT')
+password_db = os.getenv('DB_PASSWORD')
+database = os.getenv('DB_DATABASE')
 
 TOKEN = os.getenv('TOKEN')
 
